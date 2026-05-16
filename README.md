@@ -59,7 +59,7 @@ src/
 4. Create and use **Custom Exceptions** (`ProductExistsException`, `ProductNotFoundException`).
 5. Read and parse **CSV data** from the classpath using `BufferedReader`.
 6. Implement all 25 **Stream API operations** including filter, map, sort, group, partition, reduce, and collect.
-7. Write **unit tests** using JUnit 5 and Mockito.
+
 
 ---
 

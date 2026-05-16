@@ -26,11 +26,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up JDK 17
+      - name: Set up JDK 18
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '18'
 
       - name: Install yq
         run: sudo snap install yq
@@ -51,13 +51,14 @@ jobs:
         run: |
           echo "Raw input: $TOTAL_TESTS_INPUT"
 
+          # Strip non-digit chars and fallback
           if [[ "$TOTAL_TESTS_INPUT" =~ ^[0-9]+$ ]]; then
-            TOTAL_TESTS=$TOTAL_TESTS_INPUT
+             TOTAL_TESTS=$TOTAL_TESTS_INPUT
           else
             echo "Invalid or empty TOTAL_TESTS_INPUT, defaulting to 0"
             TOTAL_TESTS=0
           fi
-
+          
           error_output=$(head -c 2000 compile.log | jq -Rs .)
           payload=$(jq -n \
             --argjson passed 0 \
@@ -66,7 +67,7 @@ jobs:
             --argjson error "$error_output" \
             --arg sha "$GITHUB_SHA" \
             '{passedTests: $passed, failedTests: $failed, totalTests: $total, compileError: $error, commitSHA: $sha}')
-
+          
           curl -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: $WEBHOOK_TOKEN" \
@@ -74,19 +75,19 @@ jobs:
             "$CALLBACK_URL"
           exit 1
 
-      - name: Run Tests
+      - name: Run tests
         run: mvn test
         continue-on-error: true
 
-      - name: Process Test Results
+      - name: Process test results
         shell: bash
         env:
           WEBHOOK_TOKEN: ${{ inputs.webhook_token }}
           CALLBACK_URL: ${{ inputs.callback_url }}
           TOTAL_TESTS: ${{ inputs.total_tests || 0 }}
         run: |
-          set +e
-
+          set +e  # Important! Avoid exiting on individual command failures
+          
           # Initialize counters
           total_tests_count=$TOTAL_TESTS
           passed_tests_count=0
@@ -94,7 +95,7 @@ jobs:
           failed_tests=()
           passed_tests=()
 
-          # Process surefire XML reports
+          # Process reports if they exist
           if [ -d "target/surefire-reports" ]; then
             for file in target/surefire-reports/*.xml; do
               if [ -f "$file" ]; then
@@ -107,6 +108,7 @@ jobs:
                 passed_tests_count=$((passed_tests_count + passed))
                 failed_tests_count=$((failed_tests_count + failed))
 
+                # Process failed test cases
                 # Parse failed test cases
                 readarray failed_testcases < <(yq e -o=j -I=0 '.testsuite.testcase[] | select(has("failure"))' "$file")
                 for testcase in "${failed_testcases[@]}"; do
@@ -114,15 +116,15 @@ jobs:
                   message=$(echo "$testcase" | yq -r '.failure.+@message')
                   expected=$(grep -oP '(?<=expected: <).*?(?=> but was: <)' <<< "$message")
                   actual=$(grep -oP '(?<=but was: <).*?(?=>)' <<< "$message")
-
+          
                   json_test_result=$(jq -n \
-                    --arg name "$name" \
-                    --arg expected "$expected" \
-                    --arg actual "$actual" \
-                    '{name: $name, expectedOutput: $expected, actualOutput: $actual}')
+                  --arg name "$name" \
+                  --arg expected "$expected" \
+                  --arg actual "$actual" \
+                  '{name: $name, expectedOutput: $expected, actualOutput: $actual}')
                   failed_tests+=("$json_test_result")
                 done
-
+          
                 # Parse passed test cases
                 readarray passed_testcases < <(yq e -o=j -I=0 '.testsuite.testcase[] | select(has("failure") | not)' "$file")
                 for testcase in "${passed_testcases[@]}"; do
@@ -132,12 +134,12 @@ jobs:
               fi
             done
           fi
-
-          # Format arrays as JSON
+          
+          # Format arrays using jq
           failed_tests=$(printf '%s\n' "${failed_tests[@]}" | jq -s .)
           passed_tests=$(printf '%s\n' "${passed_tests[@]}" | jq -s .)
-
-          # Send results via webhook callback
+          
+          # Payload
           curl -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: $WEBHOOK_TOKEN" \
